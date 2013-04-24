@@ -12,24 +12,35 @@ class Client {
     protected $curl;
 
     /**
+     * Credentials for authentication
+     *
      * @var array
      */
     protected $login;
 
     /**
+     * Raw array returned from the authentication endpoint, contains tokens required for further API requests
+     *
      * @var array
      */
     protected $auth;
 
     /**
+     * Authentication failed, use this boolean to prevent repeated attempts to authenticate as $this->isAuthenticated()
+     * returns false either if authentication has not been attempted or if the authentication token has expired.
+     *
      * @var bool
      */
     protected $authFailed = false;
 
     /**
-     * @param string $login
-     * @param string $password
-     * @param null|resource $curl
+     * Initialize a CallTrackingMetrics client with access credentials. This client will not authenticate using these
+     * credentials unless either (a) manually triggered or (b) when the first API request requiring authentication has
+     * been fired.
+     *
+     * @param string $login Access Key or account name
+     * @param string $password Secret Key or account password
+     * @param null|resource $curl Manually provided cURL handle
      */
     public function __construct($login, $password, $curl = null) {
         $this->setLogin($login, $password);
@@ -37,22 +48,18 @@ class Client {
     }
 
     /**
-     * Fires an authentication request using stored login credentials and stores the resulting token
+     * Convenience function to access API endpoints, just provide every after /api/v1/ and prior to .json as the URI.
+     * For example, to list all accounts the method call would look like:
      *
-     * @throws Exception
-     */
-    public function authenticate() {
-        $resp = $this->_request("authentication", $this->getLogin(), 'POST');
-
-        if (isset($resp['success']) && $resp['success']) {
-            $this->setAuth($resp);
-        } else {
-            $this->authFailed = true;
-            throw new Exception(sprintf("Invalid CallTrackingMetrics authentication credentials: %s", isset($resp['message']) ? $resp['message'] : 'No reason given...'));
-        }
-    }
-
-    /**
+     * <pre>
+     * $client->api('accounts');
+     * </pre>
+     *
+     * Which translates roughly to /api/v1/accounts.json
+     *
+     * All api requests are assumed to require authentication. If you have not already been authenticated, api() will
+     * attempt to do so for you.
+     *
      * @param string $uri URI relative to /api/v1/<URI>
      * @param array $payload Payload values to passed in through GET or POST parameters
      * @param string $method HTTP method for request (GET, PUT, POST, ...)
@@ -63,7 +70,6 @@ class Client {
     public function api($uri, array $payload = array(), $method = 'GET', $requiresAuth = true) {
         if ($requiresAuth && !$this->isAuthenticated() && !$this->authFailed) {
             $this->authenticate();
-
             $payload['auth_token'] = $this->getAuthToken();
         }
 
@@ -71,6 +77,18 @@ class Client {
     }
 
     /**
+     * Convenience function to access account based endpoints, just provide the account id and everything after
+     * /api/v1/accounts/:account_id/ and before .json as the URI. For example, to list calls the method call would look
+     * like:
+     *
+     * <pre>
+     * $client->account(999, 'calls');
+     * </pre>
+     *
+     * Which translates roughly to a GET request at /api/v1/accounts/999/calls.json
+     *
+     * All calls are assumed to require authentication. See $this->api() for more details
+     *
      * @param int $account_id account id to be included in URL
      * @param string $uri URI relative to /api/v1/accounts/:account_id/<URI>
      * @param array $payload Payload values to passed in through GET or POST parameters
@@ -80,7 +98,27 @@ class Client {
      * @throws Exception
      */
     public function account($account_id, $uri, array $payload = array(), $method = 'GET', $requiresAuth = true) {
-        return $this->api("accounts/$account_id/$uri.json", $payload, $method);
+        return $this->api("accounts/$account_id/$uri", $payload, $method);
+    }
+
+    /**
+     * Fires an authentication request using stored login credentials and stores the resulting token. Used internally
+     * on-demand by $this->api() and $this->account()
+     *
+     * @throws Exception
+     */
+    public function authenticate() {
+        $resp = $this->_request("authentication", $this->getLogin(), 'POST');
+
+        if (isset($resp['success']) && $resp['success']) {
+            $this->setAuth($resp);
+        } else {
+            $this->authFailed = true;
+            throw new AuthException(sprintf(
+                "Invalid CallTrackingMetrics authentication credentials: %s",
+                isset($resp['message']) ? $resp['message'] : 'NO REASON PROVIDED')
+            );
+        }
     }
 
     /**
@@ -96,32 +134,36 @@ class Client {
 
         if (!empty($payload) && $method == 'GET') {
             $url .= "?" . http_build_query($payload);
+        } else if (isset($payload['auth_token'])) {
+            $url .= "?" . http_build_query(array('auth_token' => $payload['auth_token']));
+            unset($payload['auth_token']);
         }
 
         curl_setopt_array($ch, array(
             CURLOPT_URL => $url,
-            CURLOPT_HEADER => 0
         ));
 
         switch (strtoupper($method)) {
             case 'POST':
                 curl_setopt($ch, CURLOPT_POST, true);
+                curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-type: multipart/form-data'));
                 curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($payload));
                 break;
             case 'PUT':
+                curl_setopt($ch, CURLOPT_POST, false);
                 curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PUT');
+                curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-type: multipart/form-data'));
                 curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($payload));
                 break;
             case 'GET':
+                curl_setopt($ch, CURLOPT_POST, false);
                 break;
             default:
+                curl_setopt($ch, CURLOPT_POST, false);
                 curl_setopt($ch, CURLOPT_CUSTOMREQUEST, strtoupper($method));
         }
 
         $body = curl_exec($ch);
-
-        var_dump($url);
-        var_dump($body);
 
         $errno = curl_errno($ch);
         if ($errno !== 0) {

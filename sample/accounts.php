@@ -1,9 +1,15 @@
 <?php
 require '../vendor/autoload.php';
 
-$login = "";
-$password = "";
+$login    = "ACCESS TOKEN";
+$password = "ACCESS SECRET";
 
 $client = new Splash\CallTrackingMetrics\Client($login, $password);
 
-var_export($client->api('accounts'));
+try {
+    var_export($client->api('accounts'));
+} catch (\Splash\CallTrackingMetrics\AuthException $e) {
+    echo "!! Invalid authentication credentials!";
+}
+
+echo "\n";
