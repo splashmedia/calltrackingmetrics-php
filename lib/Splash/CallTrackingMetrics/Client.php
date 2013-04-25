@@ -70,6 +70,9 @@ class Client {
     public function api($uri, array $payload = array(), $method = 'GET', $requiresAuth = true) {
         if ($requiresAuth && !$this->isAuthenticated() && !$this->authFailed) {
             $this->authenticate();
+        }
+        
+        if ($requiresAuth) {
             $payload['auth_token'] = $this->getAuthToken();
         }
 
@@ -98,7 +101,7 @@ class Client {
      * @throws Exception
      */
     public function account($account_id, $uri, array $payload = array(), $method = 'GET', $requiresAuth = true) {
-        return $this->api("accounts/$account_id/$uri", $payload, $method);
+        return $this->api("accounts/$account_id/$uri", $payload, $method, $requiresAuth);
     }
 
     /**
